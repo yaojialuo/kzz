@@ -1,0 +1,1 @@
+2021-06-07 17:26:56.636 <ipython-input-10-0acad954bf42>[2] <module> -> Find Control Timeout: {ClassName: 'TdxW_MainFrame_Class', ControlType: WindowControl}
