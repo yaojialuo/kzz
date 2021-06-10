@@ -6,11 +6,13 @@ import logging
 import pdb
 import pandas as pd
 import os
+import datetime
+import time
 row_num=57
 col_num=6
 tb_num=342
 lasttime = 92500
-lastprice =2648
+lastprice =None
 
 timelist = []
 pricelist = []
@@ -55,12 +57,17 @@ first_sell_col_bound=307
 trans_bound=4
 dot_width=1
 
-def init(path,_lastprice,_first_time_col_bound,_first_price_col_bound,_first_deal_col_bound,_first_buy_col_bound,_first_sell_col_bound,_col_sep):
+
+
+def setlastprice(_lastprice):
+    global lastprice
+    lastprice = _lastprice
+
+def init(path,_first_time_col_bound,_first_price_col_bound,_first_deal_col_bound,_first_buy_col_bound,_first_sell_col_bound,_col_sep):
     # pdb.set_trace()
     global col_sep
     col_sep = _col_sep
-    global lastprice
-    lastprice = _lastprice
+
     arr = cv2.imread(path)
     imhight=arr.shape[0]
     imwidth=arr.shape[1]
@@ -176,19 +183,7 @@ def ocrVolume(arr,deal_col_bound,buy_col_bound,sell_col_bound):
     buy,_=ocrdigit(arr,buy_col_bound,ref)
     sell,_=ocrdigit(arr,sell_col_bound,ref)
     return (bs,buy[::-1],sell[::-1])
-def ocrPriceArr(price_arr,len=5,precision):
-    digit_arr=[]
-    y=price_arr.shape[1]
-    #left of dot
-    for i in range(precision):
-        digit_arr.append(price_arr[:, y - digit_width:y])
-        y = y - digit_width - digit_sep
-    y=y-dot_width-digit_sep
-    #right of dot
-    for i in range(len-precision):
-        digit_arr.append(price_arr[:, y - digit_width:y])
-        y = y - digit_width - digit_sep
-    return digit_arr
+
 def ocrTimeArr(time_arr):
     y=time_arr.shape[1]
     second1= time_arr[:, y - digit_width:y]
@@ -223,35 +218,7 @@ def ocrVolCol(colVol,i):
         printlist.append(tupl)
     for p in printlist:
         print(p)
-def ocrPriceCol(colprice,last_price_str):
-    x = x_axis_start
-    printlist = []
-    last_len=len(last_price_str)
-    for i in range(round(colprice.shape[0] / (digit_hight + row_sep)) - 1):
-        price_arrs = ocrPriceArr(colprice[x:x + digit_hight, :],last_len+1,2)#read additional empty dight
-        if (price_arrs[last_len] != empty_arr).all():
-            last_len+=1  #price increase to more digits
-        elif (price_arrs[last_len-2] == empty_arr).all():
-            last_len -= 1  #price decrease to less digits
 
-        outstr = ""
-        for i in range(last_len):
-            if last_len == len(last_price_str):
-                ret, ret_val = arr2int(price_arrs[i], int(last_price_str[last_len-i-1]))
-            else:
-                ret, ret_val = arr2int(price_arrs[i])
-            if not ret:
-                print(ret_val)
-                return ret_val, last_price_str
-            outstr += str(ret_val)
-
-        # print(i, outstr)
-        printlist.append(outstr[::-1])
-        last_price_str = outstr
-        x = x + digit_hight + row_sep
-    for p in printlist:
-        print(p)
-    return ret_val, last_price_str
 
 def ocrTimeCol(coltime,lasttime = "start"):
     #     pdb.set_trace()
@@ -321,22 +288,6 @@ def parselevel2vol(arr):
     arrg[arrg < time_pixel_threshold] = 0
     for i in range(round(arr.shape[1] / col_sep)):
         ocrVolCol(arrg, i)
-def parselevel2price(arr):
-    global lastprice
-    arrg = cv2.cvtColor(arr, cv2.COLOR_BGR2GRAY)
-    arrg[arrg >= price_pixel_threshold] = 255
-    arrg[arrg < price_pixel_threshold] = 0
-
-    for i in range(round(arrg.shape[1]/col_sep)):
-        ret_val, lastprice = ocrPriceCol(arrg[:, :first_price_col_bound + i * col_sep], str(lastprice))
-        while not isinstance(ret_val, int):
-
-            cid, errnum = findMatch(ret_val)
-            if errnum > 10:
-                print("not findMatch  cid {}, errnum {},ret_val {} !".format(cid, errnum,ret_val))
-            if updateMarsk(cid, ret_val) > 10:
-                break
-            ret_val, lastprice = ocrPriceCol(arrg[:, :first_price_col_bound + i * col_sep], lastprice)
 
 def parselevel2time(arr):
     arrg = cv2.cvtColor(arr, cv2.COLOR_BGR2GRAY)
@@ -357,7 +308,6 @@ def parselevel2time(arr):
 
 def updateVollist(arr, deal_col_bound, buy_col_bound, sell_col_bound,tb_index,arrg_2):
     # check b or s
-    # pdb.set_trace()
     bs = 0
     bs_arr = arr[:, deal_col_bound - digit_width:deal_col_bound]
     b_num = np.sum(char_b_arr == bs_arr)
@@ -398,25 +348,27 @@ def updateVollist(arr, deal_col_bound, buy_col_bound, sell_col_bound,tb_index,ar
     else:
         selllist[tb_index] = float(sell[::-1])
 
-def updatePricelist(price_arrs,last_price_str,tb_index):
+def updatePricelist(price_arr,last_price_str,tb_index,precision):
+    y = price_arr.shape[1]
     last_len = len(last_price_str)
+    # left of dot
+    i=0
+    while True:
+        if i>last_len-2 and (price_arr[:, y - digit_width:y] == empty_arr).all():
+            break
+        ret, ret_val = arr2int(price_arr[:, y - digit_width:y], int(last_price_str[last_len - i - 1]))
 
-    if (price_arrs[last_len] != empty_arr).all():
-        last_len += 1  # price increase to more digits
-    elif (price_arrs[last_len - 2] == empty_arr).all():
-        last_len -= 1  # price decrease to less digits
-
-
-    for i in range(last_len):
-        if last_len == len(last_price_str):
-            ret, ret_val = arr2int(price_arrs[i], int(last_price_str[last_len - i - 1]))
-        else:
-            ret, ret_val = arr2int(price_arrs[i])
         if not ret:
             pdb.set_trace()
             print(ret_val)
             return
-        pricelist[tb_index]+=10**i*ret_val
+
+        y = y - digit_width - digit_sep
+        if i== precision-1:
+            y = y - dot_width - digit_sep
+        pricelist[tb_index] += 10 ** i * ret_val
+        i += 1
+    pricelist[tb_index]=str(pricelist[tb_index])
     return pricelist[tb_index]
 def updateTimelist(timearrs,last_time_arrs,tb_index):
     global  lasttime
@@ -534,12 +486,9 @@ def img2pd(arr,path,precision,checkoverlap=False):
             #     regOverlap(coltime_count[x:x + digit_hight, :], tb_index+1)
             updateTimelist(timearrs, last_time_arrs,tb_index)
 
-            # print("lastprice:",lastprice)
-            colprice = arrg[:, first_time_col_bound + ci * col_sep:first_price_col_bound + ci * col_sep,precision]
-            price_arrs = ocrPriceArr(colprice[x:x + digit_hight, :], len(str(lastprice)) + 1)  # read additional empty dight
-            lastprice=updatePricelist(price_arrs, str(lastprice), tb_index)
+            colprice = arrg[:, first_time_col_bound + ci * col_sep:first_price_col_bound + ci * col_sep]
 
-
+            lastprice=updatePricelist(colprice[x:x + digit_hight, :], lastprice, tb_index,precision)
             updateVollist(arrg[x:x + digit_hight, :], deal_col_bound, buy_col_bound, sell_col_bound,tb_index,arrg_2[x:x + digit_hight, :])
             bound_arr=arrg_2[x + digit_hight + trans_bound, buy_col_bound - digit_width:buy_col_bound]
             detecbound(bound_arr,buylist,tb_index)
@@ -621,19 +570,93 @@ def genOrderdf(imdf,lis):
     df = pd.DataFrame(rows,columns=["trade_sum","trade_sum_price","start_time","end_time","start_id","end_id"])
     return df
 
-def parseimdir(src=r"E:\pycharm\kzz\screen_shot\000002",tgt):
-    path = r"E:\pycharm\kzz\screen_shot\000002"
+def parseid(scr, id,_lastprice,precision, tgt):
+    path = os.path.join(scr,id)
     filenum=len(os.listdir(path))
+    tgtpath=os.path.join(tgt,id)
+    setlastprice(_lastprice)
     for i in range(filenum)[::-1]:
         if os.path.isfile(os.path.join(path, str(i + 1) + ".jpg")):
-            print(str(i + 1) + ".jpg")
-            precision = 2
+            print( f"img2pd {id} {str(i + 1)}.jpg ")
+
             arr = cv2.imread(os.path.join(path, str(i + 1) + ".jpg"),)
-            if i + 1 == 303:
-                arr = img2pd(arr, f"1.csv", True)
-            else:
-                arr = img2pd(arr, f"1.csv",precision)
 
-
+            img2pd(arr, f"{tgtpath}.csv",precision)
         else:
-            print(str(i + 1) + ".jpg not exists")
+            print("{id}{str(i + 1)}.jpg not exists")
+
+def screenOneDay(scr,ids):
+
+
+    now_time = datetime.datetime.now()
+    path = scr + str(now_time.date())
+    if not os.path.isdir(path):
+        os.mkdir(path)
+    import mss
+    import uiautomation as auto
+    tdx = auto.WindowControl(searchDepth=1, ClassName='TdxW_MainFrame_Class')
+    mon = {'top': 88, 'left': 1, 'width': 1336, 'height': 612}
+    sct = mss.mss()
+    for (id,_,_) in ids:
+        i = 1
+        idpath = os.path.join(path, id)
+        if not os.path.isdir(idpath):
+            os.mkdir(idpath)
+
+        not_first = True
+        last_arr = None
+        tdx.SendKeys(id + "{enter}", 0.2, 0)
+        time.sleep(0.1)
+        tdx.SendKeys('.504{enter}', 0.2, 0)
+        time.sleep(0.5)
+        while not_first:
+
+            im = np.asarray(sct.grab(mon))
+            img = cv2.cvtColor(im, cv2.COLOR_BGR2GRAY)
+            if not (last_arr == img[:300, :600]).all():
+                cv2.imwrite(os.path.join(idpath, f"{i}.jpg"), im)
+                print(f"cv2.imwrite {i}.jpg")
+                tdx.SendKeys('{PageUp}', 0.2, 0)
+                last_arr = img[:300, :600]
+                i += 1
+            else:
+                for t in range(10):
+                    print(f"try screenshot times {t}")
+                    im = np.asarray(sct.grab(mon))
+                    img = cv2.cvtColor(im, cv2.COLOR_BGR2GRAY)
+                    tdx.SendKeys('{PageUp}', 0.2, 0)
+                    if not (last_arr == img[:300, :600]).all():
+                        break
+                if (last_arr == img[:300, :600]).all():
+                    not_first = False
+            time.sleep(0.2)
+def parseOneDay(scr,tgt):
+
+    now_time = datetime.datetime.now()
+    path = tgt + str(now_time.date())
+    if not os.path.isdir(path):
+        os.mkdir(path)
+    ids = os.listdir(scr)
+    for id in ids:
+        parseid(scr, id, path)
+
+def getids(filename):
+    # import tushare as ts
+    # df = ts.get_today_all()
+    # ids = df[df.changepercent > 5].sort_values('changepercent', ascending=False).code
+    fo = open(filename)
+    text_lines = fo.readlines()
+    ids=set()
+    for line in text_lines[1:-1]:
+        row = line.split("\t")
+        id=row[0]
+        name=row[1]
+
+        if row[2]=='--  ':
+            continue
+        change=float(row[2])
+        closep=row[3]
+        openp=row[4]
+        if change > 4 or change < -4:
+            ids.add( (id,openp,len(row[3])-row[3].find(".")-1))
+    return ids
