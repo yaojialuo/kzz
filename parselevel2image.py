@@ -5,12 +5,13 @@ import pickle
 import logging
 import pdb
 import pandas as pd
+import os
 row_num=57
 col_num=6
 tb_num=342
 lasttime = 92500
 lastprice =2648
-precision=2
+
 timelist = []
 pricelist = []
 tradelist = []
@@ -22,7 +23,7 @@ bslist=[]
 # from parselevel2image import *
 # arr1  =cv2.imread(r"2.jpg")
 # print(arr1.shape)
-# precision=3
+
 # parselevel2price(arr1)
 #save_pickle()
 
@@ -31,7 +32,9 @@ FORMAT = "[%(filename)s:%(lineno)s - %(funcName)20s() ] %(message)s"
 logging.basicConfig(format=FORMAT)
 logger.setLevel(logging.INFO)
 data_input = open('ocr_conf.pkl', 'rb')
-(digit_arr, digt_marsk_arr, empty_arr,char_s_arr,char_b_arr,prec3_dict,precun_dict) = pickle.load(data_input)
+
+(digit_arr, digt_marsk_arr, empty_arr,char_s_arr,char_b_arr) = pickle.load(data_input)
+prec3_set=set()
 data_input.close()
 digit_width=6
 digit_sep=2
@@ -52,14 +55,12 @@ first_sell_col_bound=307
 trans_bound=4
 dot_width=1
 
-def init(path,_lastprice,_precision,_first_time_col_bound,_first_price_col_bound,_first_deal_col_bound,_first_buy_col_bound,_first_sell_col_bound,_col_sep):
+def init(path,_lastprice,_first_time_col_bound,_first_price_col_bound,_first_deal_col_bound,_first_buy_col_bound,_first_sell_col_bound,_col_sep):
     # pdb.set_trace()
     global col_sep
     col_sep = _col_sep
     global lastprice
     lastprice = _lastprice
-    global precision
-    precision =_precision
     arr = cv2.imread(path)
     imhight=arr.shape[0]
     imwidth=arr.shape[1]
@@ -83,7 +84,7 @@ def init(path,_lastprice,_precision,_first_time_col_bound,_first_price_col_bound
 
 def save_pickle():
     data_output = open('ocr_conf.pkl', 'wb')
-    pickle.dump((digit_arr, digt_marsk_arr, empty_arr,char_s_arr,char_b_arr,prec3_dict,precun_dict), data_output)
+    pickle.dump((digit_arr, digt_marsk_arr, empty_arr,char_s_arr,char_b_arr), data_output)
     data_output.close()
 
 def ocrdigit(arr, bound,ref=None):
@@ -175,7 +176,7 @@ def ocrVolume(arr,deal_col_bound,buy_col_bound,sell_col_bound):
     buy,_=ocrdigit(arr,buy_col_bound,ref)
     sell,_=ocrdigit(arr,sell_col_bound,ref)
     return (bs,buy[::-1],sell[::-1])
-def ocrPriceArr(price_arr,len=5):
+def ocrPriceArr(price_arr,len=5,precision):
     digit_arr=[]
     y=price_arr.shape[1]
     #left of dot
@@ -227,7 +228,7 @@ def ocrPriceCol(colprice,last_price_str):
     printlist = []
     last_len=len(last_price_str)
     for i in range(round(colprice.shape[0] / (digit_hight + row_sep)) - 1):
-        price_arrs = ocrPriceArr(colprice[x:x + digit_hight, :],last_len+1)#read additional empty dight
+        price_arrs = ocrPriceArr(colprice[x:x + digit_hight, :],last_len+1,2)#read additional empty dight
         if (price_arrs[last_len] != empty_arr).all():
             last_len+=1  #price increase to more digits
         elif (price_arrs[last_len-2] == empty_arr).all():
@@ -479,7 +480,7 @@ def printlist(plist):
             s=s+str(plist[ci*row_num+r])+"\t"
         print(s)
 
-def img2pd(arr,path,checkoverlap=False):
+def img2pd(arr,path,precision,checkoverlap=False):
     global timelist
     timelist = [None] * tb_num
     global pricelist
@@ -534,7 +535,7 @@ def img2pd(arr,path,checkoverlap=False):
             updateTimelist(timearrs, last_time_arrs,tb_index)
 
             # print("lastprice:",lastprice)
-            colprice = arrg[:, first_time_col_bound + ci * col_sep:first_price_col_bound + ci * col_sep]
+            colprice = arrg[:, first_time_col_bound + ci * col_sep:first_price_col_bound + ci * col_sep,precision]
             price_arrs = ocrPriceArr(colprice[x:x + digit_hight, :], len(str(lastprice)) + 1)  # read additional empty dight
             lastprice=updatePricelist(price_arrs, str(lastprice), tb_index)
 
@@ -593,12 +594,16 @@ def changeUTF8(filename):
         f.truncate()
         f.write(data)
 
-def genprecisiondict(filename):
-    fo = open(filename,encoding='utf-8')
+def getprecisionset(filename):
+    fo = open(filename)
     text_lines = fo.readlines()
     for line in text_lines[1:-1]:
         row = line.split()
-        row[0] = row[0].replace(":", "")
+        _precision=len(row[3])-row[3].find(".")
+        # if row[3] == "0.000":
+        #     pdb.set_trace()
+        if _precision ==4:
+            prec3_set.add(row[0])
         # if len(row) == 5:
         #     row[-2] = row[-1]
         #     df.append(row[:-1])
@@ -606,7 +611,6 @@ def genprecisiondict(filename):
 
 
 def genOrderdf(imdf,lis):
-
     rows=[]
     for order in lis:
         trade_sum=imdf.trade[order[0]:order[1]+1].sum()
@@ -616,3 +620,20 @@ def genOrderdf(imdf,lis):
         rows.append((trade_sum,trade_sum_price,start_time,end_time,order[0],order[1]))
     df = pd.DataFrame(rows,columns=["trade_sum","trade_sum_price","start_time","end_time","start_id","end_id"])
     return df
+
+def parseimdir(src=r"E:\pycharm\kzz\screen_shot\000002",tgt):
+    path = r"E:\pycharm\kzz\screen_shot\000002"
+    filenum=len(os.listdir(path))
+    for i in range(filenum)[::-1]:
+        if os.path.isfile(os.path.join(path, str(i + 1) + ".jpg")):
+            print(str(i + 1) + ".jpg")
+            precision = 2
+            arr = cv2.imread(os.path.join(path, str(i + 1) + ".jpg"),)
+            if i + 1 == 303:
+                arr = img2pd(arr, f"1.csv", True)
+            else:
+                arr = img2pd(arr, f"1.csv",precision)
+
+
+        else:
+            print(str(i + 1) + ".jpg not exists")
