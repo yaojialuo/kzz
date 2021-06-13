@@ -8,6 +8,7 @@ import pandas as pd
 import os
 import datetime
 import time
+has_init=False
 row_num=57
 col_num=6
 tb_num=342
@@ -90,7 +91,8 @@ def init(path,_first_time_col_bound,_first_price_col_bound,_first_deal_col_bound
     first_buy_col_bound =_first_buy_col_bound
     global first_sell_col_bound
     first_sell_col_bound = _first_sell_col_bound
-
+    global has_init
+    has_init = True
 
 def save_pickle():
     data_output = open('ocr_conf.pkl', 'wb')
@@ -337,8 +339,7 @@ def updateVollist(arr, deal_col_bound, buy_col_bound, sell_col_bound,tb_index,ar
     elif s_num > e_num:
         bs = -1
     bslist[tb_index]=bs
-    deal_col_bound = deal_col_bound - digit_width - digit_sep
-    ref, get_dot = ocrdigit(arr, deal_col_bound)
+    ref, get_dot = ocrdigit(arr, deal_col_bound - digit_width - digit_sep)
     tradelist[tb_index] = float(ref[::-1])
     if get_dot:
         ref = None
@@ -363,11 +364,11 @@ def updateVollist(arr, deal_col_bound, buy_col_bound, sell_col_bound,tb_index,ar
         selllist[tb_index] = float(sell[::-1])
 
     def ocrOrderChar(x_,bound,leftbound):
-
-        arr = arrg_[x_: x_+10, bound-5:bound]
+        # pdb.set_trace()
+        arr = arrg_[x_: x_+10, leftbound:bound]
 
         threshold = getBinaryThreshold(arr)
-        arrg_change =arrg_[x_: x_ + 10, leftbound:bound]
+        arrg_change =arrg_[x_: x_ + 10, leftbound:bound].copy()
         if np.sum(arrg_change < threshold) > arrg_change.shape[0]*arrg_change.shape[1]/2:
             arrg_change[arrg_change > threshold] = 0
             arrg_change[arrg_change !=0]=255
@@ -375,11 +376,13 @@ def updateVollist(arr, deal_col_bound, buy_col_bound, sell_col_bound,tb_index,ar
             arrg_change[arrg_change < threshold] = 0
             arrg_change[arrg_change > threshold] = 255
 
+        y = arrg_change.shape[1]
+        if (arrg_change[0, y - 5:y] == 255).all():
+            return 0
         i=0
         vol=0
-        y = arrg_change.shape[1]
-        if (arrg_change[0, y - 5:y]  == 255).all():
-            return 0
+
+
         while True:
             if (arrg_change[:, y - 5:y] == empty_arr2).all():
                 break
@@ -397,6 +400,7 @@ def updateVollist(arr, deal_col_bound, buy_col_bound, sell_col_bound,tb_index,ar
     if buylist[tb_index] != -2:
         buyorder = None
     elif buyorder == None:
+
         ret = ocrOrderChar(x+2,buy_col_bound,deal_col_bound)
         if not ret:
             ret =  ocrOrderChar(x+10,buy_col_bound,deal_col_bound)
@@ -497,7 +501,10 @@ def printlist(plist):
             s=s+str(plist[ci*row_num+r])+"\t"
         print(s)
 
-def img2pd(arr,path,precision,checkoverlap=False):
+def img2pd(arr,path,precision,mode,checkoverlap=False):
+    global has_init
+    if not has_init:
+        print("img2pd  init first !")
     global buyorder
     global sellorder
     global timelist
@@ -566,42 +573,47 @@ def img2pd(arr,path,precision,checkoverlap=False):
             tb_index+=1
             x = x + digit_hight + row_sep
 
-    pd.DataFrame({'time':timelist[overlap:],'price':pricelist[overlap:],'trade':tradelist[overlap:],'bs':bslist[overlap:],'buy':buylist[overlap:],'sell':selllist[overlap:]}).to_csv(path,header=False,index=False,mode="a")
+    pd.DataFrame({'time':timelist[overlap:],'price':pricelist[overlap:],'trade':tradelist[overlap:],'bs':bslist[overlap:],'buy':buylist[overlap:],'sell':selllist[overlap:]}).to_csv(path,header=False,index=False,mode=mode)
     lasttime=timelist[-1]
 
 def mergeOrderlist(lis):
     order_begin=-1
     order=[]
-    has_price=False
+    order_price=None
     for i in range(len(lis)):
 
-        if lis[i] > 0:
+        if pd.isnull(lis[i]) and  order_begin == -1:
+            order_begin = i
             continue
-        if lis[0] == 0 and  order_begin == -1:
-            order_begin =i
+        if lis[i] >= 0:
             continue
+
         # begin
         if lis[i]==-1  and  order_begin == -1:
             order_begin = i
 
         if lis[i] == -2 :
-            has_price = True
+            if order_price is  None:
+                order_price = lis[i - 1]
             if order_begin == -1:
-                order_begin=i
+                order_begin=i-1
 
         if lis[i]==-3:
-            if has_price:
+            if order_price is not None:
                 if order_begin == -1:
                     pdb.set_trace()
                     print("error occur in mergeOrderdf")
                     return
 
-                order.append([order_begin,i])
-                has_price = False
+                order.append([order_begin,i,order_price])
+                order_price = None
                 order_begin = -1
             #fake order merge to last order
+            elif lis[i-1] >0: #tow block order
+                order.append([i-1, i,lis[i-1]])
+                order_begin = -1
             else:
-                order[-1][-1]=i
+                order[-1][1]=i
     return order
 
 def changeUTF8(filename):
@@ -650,7 +662,7 @@ def parseOneId(scr, id, _lastprice, precision, tgt):
 
             arr = cv2.imread(os.path.join(path, str(i + 1) + ".jpg"),)
 
-            img2pd(arr, f"{tgtpath}.csv",precision)
+            img2pd(arr, f"{tgtpath}.csv",precision,'a')
         else:
             print("{id}{str(i + 1)}.jpg not exists")
 
