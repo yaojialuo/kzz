@@ -13,7 +13,8 @@ col_num=6
 tb_num=342
 lasttime = 92500
 lastprice =None
-
+buyorder =None
+sellorder =None
 timelist = []
 pricelist = []
 tradelist = []
@@ -34,8 +35,10 @@ FORMAT = "[%(filename)s:%(lineno)s - %(funcName)20s() ] %(message)s"
 logging.basicConfig(format=FORMAT)
 logger.setLevel(logging.INFO)
 data_input = open('ocr_conf.pkl', 'rb')
+# digit_arr2=[None]*10
+empty_arr2=np.full((10, 5), 255)
 
-(digit_arr, digt_marsk_arr, empty_arr,char_s_arr,char_b_arr) = pickle.load(data_input)
+(digit_arr, digt_marsk_arr, empty_arr,char_s_arr,char_b_arr,digit_arr2) = pickle.load(data_input)
 prec3_set=set()
 data_input.close()
 digit_width=6
@@ -91,7 +94,7 @@ def init(path,_first_time_col_bound,_first_price_col_bound,_first_deal_col_bound
 
 def save_pickle():
     data_output = open('ocr_conf.pkl', 'wb')
-    pickle.dump((digit_arr, digt_marsk_arr, empty_arr,char_s_arr,char_b_arr), data_output)
+    pickle.dump((digit_arr, digt_marsk_arr, empty_arr,char_s_arr,char_b_arr,digit_arr2), data_output)
     data_output.close()
 
 def ocrdigit(arr, bound,ref=None):
@@ -158,7 +161,7 @@ def ocrdigit(arr, bound,ref=None):
                     # logger.debug(ret_val)
                     break
     if digit_str=="":
-        return "0",False
+        return None,False
     return digit_str,get_dot
 def ocrVolume(arr,deal_col_bound,buy_col_bound,sell_col_bound):
     #check b or s
@@ -204,6 +207,11 @@ def arr2int(arr,last=None):
 
     for (cid,c) in enumerate( digit_arr):
         if np.logical_or(arr ==digit_arr[cid] ,digt_marsk_arr[cid]).all():
+            return 1,cid
+    return 0,arr
+def arr2int2(arr):
+    for (cid,c) in enumerate( digit_arr2):
+        if (arr ==digit_arr2[cid]).all():
             return 1,cid
     return 0,arr
 def ocrVolCol(colVol,i):
@@ -305,9 +313,17 @@ def parselevel2time(arr):
                 break
             ret_val, lasttime = ocrTimeCol(arrg[:, :first_time_col_bound + i * col_sep], lasttime)
 
-
-def updateVollist(arr, deal_col_bound, buy_col_bound, sell_col_bound,tb_index,arrg_2):
+def getBinaryThreshold(arr):
+    sa=np.sort(arr.flatten())
+    sb=np.append(sa,sa[-1])
+    diff = sb[1:] - sa
+    maxid = np.argmax(diff)
+    return sa[maxid] + (sa[maxid+1] -sa[maxid])/2
+def updateVollist(arr, deal_col_bound, buy_col_bound, sell_col_bound,tb_index,arrg_,x):
     # check b or s
+    global  buyorder
+    global  sellorder
+    arrg_2=arrg_[x: x + digit_hight,:]
     bs = 0
     bs_arr = arr[:, deal_col_bound - digit_width:deal_col_bound]
     b_num = np.sum(char_b_arr == bs_arr)
@@ -329,24 +345,71 @@ def updateVollist(arr, deal_col_bound, buy_col_bound, sell_col_bound,tb_index,ar
     buy, _ = ocrdigit(arr, buy_col_bound, ref)
     sell, _ = ocrdigit(arr, sell_col_bound, ref)
 
-    if buy=="0":
+    if buy==None:
         # pdb.set_trace()
         #check if is order char
         if arrg_2[:, buy_col_bound - digit_width:buy_col_bound].max() -arrg_2[:, buy_col_bound - digit_width:buy_col_bound].min()> 50:
             buylist[tb_index] = -2
-        elif buylist[tb_index] is None:
-            buylist[tb_index] = 0
     else:
         buylist[tb_index] = float(buy[::-1])
 
-    if sell=="0":
+
+    if sell==None:
         #check if is order char
         if arrg_2[:, sell_col_bound - digit_width:sell_col_bound].max() -arrg_2[:, sell_col_bound - digit_width:sell_col_bound].min()> 50:
             selllist[tb_index] = -2
-        elif selllist[tb_index] is None:
-            selllist[tb_index] = 0
+            # pdb.set_trace()
     else:
         selllist[tb_index] = float(sell[::-1])
+
+    def ocrOrderChar(x_,bound,leftbound):
+
+        arr = arrg_[x_: x_+10, bound-5:bound]
+
+        threshold = getBinaryThreshold(arr)
+        arrg_change =arrg_[x_: x_ + 10, leftbound:bound]
+        if np.sum(arrg_change < threshold) > arrg_change.shape[0]*arrg_change.shape[1]/2:
+            arrg_change[arrg_change > threshold] = 0
+            arrg_change[arrg_change !=0]=255
+        else:
+            arrg_change[arrg_change < threshold] = 0
+            arrg_change[arrg_change > threshold] = 255
+
+        i=0
+        vol=0
+        y = arrg_change.shape[1]
+        if (arrg_change[0, y - 5:y]  == 255).all():
+            return 0
+        while True:
+            if (arrg_change[:, y - 5:y] == empty_arr2).all():
+                break
+            ret, ret_val = arr2int2(arrg_change[:, y - 5:y])
+
+            if not ret:
+
+                print(ret_val)
+                pdb.set_trace()
+                return
+            y = y - 7
+            vol += 10 ** i * ret_val
+            i += 1
+        return vol
+    if buylist[tb_index] != -2:
+        buyorder = None
+    elif buyorder == None:
+        ret = ocrOrderChar(x+2,buy_col_bound,deal_col_bound)
+        if not ret:
+            ret =  ocrOrderChar(x+10,buy_col_bound,deal_col_bound)
+        buyorder = ret
+        buylist[tb_index] = buyorder
+    if selllist[tb_index] != -2:
+        sellorder =None
+    elif sellorder ==None:
+        ret = ocrOrderChar(x + 2, sell_col_bound, buy_col_bound)
+        if not ret:
+            ret = ocrOrderChar(x + 10, sell_col_bound, buy_col_bound)
+        sellorder=ret
+        selllist[tb_index]=sellorder
 
 def updatePricelist(price_arr,last_price_str,tb_index,precision):
     y = price_arr.shape[1]
@@ -398,10 +461,11 @@ def detecbound(arr,list,tb_index):
     if arr.min()>=170 and arr.max() <190:
         # get bound
 
-        if list[tb_index] == 0 or list[tb_index] == -2:
+        if list[tb_index] == None or list[tb_index] == -2:
             list[tb_index] = -3
         if tb_index+1<tb_num:
             list[tb_index+1] = -1
+        return True
 def regOverlap(arr,ref=None):
     if ref is not None:
         digit_str, _ = ocrdigit(arr,arr.shape[1],str(ref)[::-1])
@@ -426,6 +490,7 @@ def regOverlap(arr,ref=None):
         return 0
 
 def printlist(plist):
+
     for r in range(row_num):
         s=""
         for ci in range(col_num):
@@ -433,6 +498,8 @@ def printlist(plist):
         print(s)
 
 def img2pd(arr,path,precision,checkoverlap=False):
+    global buyorder
+    global sellorder
     global timelist
     timelist = [None] * tb_num
     global pricelist
@@ -489,11 +556,13 @@ def img2pd(arr,path,precision,checkoverlap=False):
             colprice = arrg[:, first_time_col_bound + ci * col_sep:first_price_col_bound + ci * col_sep]
 
             lastprice=updatePricelist(colprice[x:x + digit_hight, :], lastprice, tb_index,precision)
-            updateVollist(arrg[x:x + digit_hight, :], deal_col_bound, buy_col_bound, sell_col_bound,tb_index,arrg_2[x:x + digit_hight, :])
+            updateVollist(arrg[x:x + digit_hight, :], deal_col_bound, buy_col_bound, sell_col_bound,tb_index,arrg_2,x)
             bound_arr=arrg_2[x + digit_hight + trans_bound, buy_col_bound - digit_width:buy_col_bound]
-            detecbound(bound_arr,buylist,tb_index)
+            if detecbound(bound_arr,buylist,tb_index):
+                buyorder=None
             bound_arr = arrg_2[x + digit_hight + trans_bound, sell_col_bound - digit_width:sell_col_bound]
-            detecbound(bound_arr, selllist, tb_index)
+            if detecbound(bound_arr, selllist, tb_index) :
+                sellorder=None
             tb_index+=1
             x = x + digit_hight + row_sep
 
@@ -570,7 +639,7 @@ def genOrderdf(imdf,lis):
     df = pd.DataFrame(rows,columns=["trade_sum","trade_sum_price","start_time","end_time","start_id","end_id"])
     return df
 
-def parseid(scr, id,_lastprice,precision, tgt):
+def parseOneId(scr, id, _lastprice, precision, tgt):
     path = os.path.join(scr,id)
     filenum=len(os.listdir(path))
     tgtpath=os.path.join(tgt,id)
@@ -631,14 +700,19 @@ def screenOneDay(scr,ids):
                     not_first = False
             time.sleep(0.2)
 def parseOneDay(scr,tgt):
-
+    # path = r"Z:\trade\screen_shot\2021-06-07\301002\1.jpg"
+    #
+    # arr = cv2.imread(path)
+    # l2.init(path, 54, 138, 206, 269, 329, 335)
+    # for id in idl[:2]:
+    #     l2.parseOneId(r"Z:\trade\screen_shot\2021-06-07", id, "000", 2, r"Z:\trade\screen_shot_csv\2021-06-07")
     now_time = datetime.datetime.now()
     path = tgt + str(now_time.date())
     if not os.path.isdir(path):
         os.mkdir(path)
     ids = os.listdir(scr)
     for id in ids:
-        parseid(scr, id, path)
+        parseOneId(scr, id, path)
 
 def getids(filename):
     # import tushare as ts
